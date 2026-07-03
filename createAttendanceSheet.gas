@@ -1,0 +1,150 @@
+function createAttendanceSheet() {
+  var ui = SpreadsheetApp.getUi();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  
+  // 1. 年の入力ポップアップ
+  var yearResponse = ui.prompt(
+    "勤怠管理表の作成 (1/2)",
+    "作成したい「年」を半角数字で入力してください。\n（例: 2026）",
+    ui.ButtonSet.OK_CANCEL
+  );
+  
+  if (yearResponse.getSelectedButton() !== ui.Button.OK) return;
+  var year = yearResponse.getResponseText().trim();
+  
+  if (!year || isNaN(year) || year.length !== 4) {
+    ui.alert("エラー", "4桁の有効な西暦（半角数字）を入力してください。", ui.ButtonSet.OK);
+    return;
+  }
+  
+  // 2. 月の入力ポップアップ
+  var monthResponse = ui.prompt(
+    "勤怠管理表の作成 (2/2)",
+    year + "年何月の表を作成しますか？\n「月」を1〜12の半角数字で入力してください。",
+    ui.ButtonSet.OK_CANCEL
+  );
+  
+  if (monthResponse.getSelectedButton() !== ui.Button.OK) return;
+  var month = monthResponse.getResponseText().trim();
+  
+  if (!month || isNaN(month) || month < 1 || month > 12) {
+    ui.alert("エラー", "1〜12の有効な月（半角数字）を入力してください。", ui.ButtonSet.OK);
+    return;
+  }
+  
+  var sheetName = year + "年" + month + "月";
+  
+  if (ss.getSheetByName(sheetName)) {
+    ui.alert("エラー", "すでに「" + sheetName + "」シートは存在します。", ui.ButtonSet.OK);
+    return;
+  }
+  
+  // 新規シートの作成
+  var newSheet = ss.insertSheet(sheetName);
+  
+  // ヘッダーの設定
+  var headers = [["日付", "曜日", "タイプ", "開始時間", "終了時間", "休憩時間", "労働時間", "残業時間", "メモ"]];
+  newSheet.getRange(1, 1, 1, 9).setValues(headers)
+                                .setBackground("#cfe2f3")
+                                .setFontWeight("bold")
+                                .setHorizontalAlignment("center");
+  
+  // 該当月の日数を取得
+  var lastDay = new Date(year, month, 0).getDate();
+  
+  // データの生成と数式の埋め込み
+  var rowData = [];
+  for (var i = 1; i <= lastDay; i++) {
+    var dateStr = year + "/" + month + "/" + i;
+    var rowNum = i + 1;
+    
+    var formulaWork = '=IF(AND(D' + rowNum + '<>"", E' + rowNum + '<>""), MAX(0, E' + rowNum + '-D' + rowNum + '-F' + rowNum + '), "")';
+    var formulaOver = '=IF(G' + rowNum + '<>"", MAX(0, G' + rowNum + '-"7:00"), "")';
+    
+    rowData.push([
+      dateStr,
+      '=TEXT(A' + rowNum + ', "ddd")',
+      "", 
+      "", 
+      "", 
+      "", 
+      formulaWork, 
+      formulaOver, 
+      ""  
+    ]);
+  }
+  
+  // シートにデータを書き込み
+  newSheet.getRange(2, 1, lastDay, 9).setValues(rowData);
+  
+  // ★ タイプのプルダウン設定（「お休み」を追加）
+  var types = ["通常出勤", "リモートワーク", "有給休暇", "有給半休", "休暇", "半休", "お休み"];
+  var rule = SpreadsheetApp.newDataValidation().requireValueInList(types, true).build();
+  var typeRange = newSheet.getRange(2, 3, lastDay, 1);
+  typeRange.setDataValidation(rule);
+  
+  // ★ タイプごとの色付け（条件付き書式の設定）
+  var rules = [];
+  
+  // リモートワーク ＝ 薄い緑
+  rules.push(SpreadsheetApp.newConditionalFormatRule()
+    .whenTextEqualTo("リモートワーク")
+    .setBackground("#e2f0d9")
+    .setFontColor("#385723")
+    .setRanges([typeRange])
+    .build());
+    
+  // 有給休暇・休暇・お休み ＝ 薄い赤
+  var redTypes = ["有給休暇", "休暇", "お休み"];
+  redTypes.forEach(function(t) {
+    rules.push(SpreadsheetApp.newConditionalFormatRule()
+      .whenTextEqualTo(t)
+      .setBackground("#fce4d6")
+      .setFontColor("#c65911")
+      .setRanges([typeRange])
+      .build());
+  });
+  
+  // 有給半休・半休 ＝ 薄い黄
+  var yellowTypes = ["有給半休", "半休"];
+  yellowTypes.forEach(function(t) {
+    rules.push(SpreadsheetApp.newConditionalFormatRule()
+      .whenTextEqualTo(t)
+      .setBackground("#fff2cc")
+      .setFontColor("#7f6000")
+      .setRanges([typeRange])
+      .build());
+  });
+  
+  newSheet.setConditionalFormatRules(rules);
+  
+  // 各種フォーマットの設定
+  newSheet.getRange(2, 1, lastDay, 1).setNumberFormat("yyyy/mm/dd"); 
+  newSheet.getRange(2, 4, lastDay, 5).setNumberFormat("[hh]:mm");    
+  newSheet.getRange(1, 1, lastDay + 4, 8).setHorizontalAlignment("center"); 
+  
+  // 合計行の追加
+  var totalRowNum = lastDay + 2; 
+  newSheet.getRange(totalRowNum, 6).setValue("労働時間合計").setFontWeight("bold").setBackground("#f3f3f3");
+  newSheet.getRange(totalRowNum, 7).setValue('=SUM(G2:G' + (totalRowNum-1) + ')').setNumberFormat("[hh]:mm").setFontWeight("bold");
+  
+  var overRowNum = totalRowNum + 1;
+  newSheet.getRange(overRowNum, 6).setValue("残業時間合計").setFontWeight("bold").setBackground("#f3f3f3");
+  newSheet.getRange(overRowNum, 7).setValue('=SUM(H2:H' + (totalRowNum-1) + ')').setNumberFormat("[hh]:mm").setFontWeight("bold");
+  
+  var grandRowNum = overRowNum + 1;
+  newSheet.getRange(grandRowNum, 6).setValue("全時間合計").setFontWeight("bold").setBackground("#d9ead3");
+  newSheet.getRange(grandRowNum, 7).setValue('=G' + totalRowNum + '+G' + overRowNum).setNumberFormat("[hh]:mm").setFontWeight("bold");
+  
+  // 枠線の設定
+  newSheet.getRange(1, 1, grandRowNum, 9).setBorder(true, true, true, true, true, true);
+  
+  // ★ 列幅の自動調整 ＋ ゆとりを持たせる調整
+  newSheet.autoResizeColumns(1, 9);
+  for (var col = 1; col <= 9; col++) {
+    var currentWidth = newSheet.getColumnWidth(col);
+    newSheet.setColumnWidth(col, currentWidth + 25); // 自動調整された幅に+25ピクセルして見やすく
+  }
+  
+  ui.alert("完了", "「" + sheetName + "」を作成しました！", ui.ButtonSet.OK);
+}
